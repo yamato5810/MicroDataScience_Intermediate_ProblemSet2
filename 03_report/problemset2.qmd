@@ -1,0 +1,215 @@
+---
+title: "Problem Set2"
+author: "Yamato Igarashi (2125701)"
+format: pdf
+editor: visual
+pdf-engine: lualatex
+documentclass: ltjsarticle 
+---
+
+GitHub URL: https://github.com/yamato5810/MicroDataScience_Intermediate_ProblemSet2
+
+```{r, echo=FALSE, include=FALSE}
+master <- readr::read_csv(here::here("01_data", "raw", "master.csv"))|> 
+  dplyr::select(-1)
+```
+
+# (a) 記述統計
+
+## 1.　記述統計
+
+```{r, echo=FALSE, include=FALSE}
+switchers <- master |> 
+  dplyr::group_by(unitid) |> 
+  dplyr::filter(any(quarter == 1)) |> 
+  dplyr::filter(any(semester == 1)) |> 
+  dplyr::ungroup() 
+never_swichers <- dplyr::anti_join(master, switchers) 
+
+make_descriptive_statistics <- function(dataframe, type){
+  descriptive_statistics <-  dataframe[,c(3, 13, 12, 14, 17, 6, 15, 16)] |>
+    colMeans(na.rm = TRUE) |> 
+    round(digits = 2) |> 
+    as.data.frame() |> 
+    magrittr::set_colnames(type)
+}
+descriptive_statistics_all             <- make_descriptive_statistics(dataframe = master, type = "all")
+descriptive_statistics_switchers       <- make_descriptive_statistics(dataframe = switchers, type = "switchers")
+descriptive_statistics_never_switchers <- make_descriptive_statistics(dataframe = never_swichers, type = "never_swichers")
+
+descriptive_statistics <- cbind(descriptive_statistics_all, descriptive_statistics_never_switchers, descriptive_statistics_switchers)
+
+```
+
+```{r, echo=FALSE}
+descriptive_statistics 
+```
+
+上記の記述統計表より、quarterからsemesterに変更した大学は、それ以外の大学と比べて、男女にかかわらず4年卒業率が低く、学費が安いことがわかる。一方で、cohort sizeやfacultyの人数、大学全体の支出に関しては、semesterに変更した大学のほうが平均して多いことも読み取れる。
+
+また、どの集団にも共通して言えることとしては、女性は男性より4年卒業率が高くなっている。
+
+## 2. 4年卒業率の平均推移
+
+```{r, echo=FALSE}
+master_by_year <- master |> 
+  dplyr::group_by(year) |> 
+  dplyr::summarise(gradrate4yr_mean = mean(gradrate4yr), semester_rate = mean(semester))
+
+graph_gradrate <- ggplot2::ggplot(data = master_by_year, ggplot2::aes(x = year, y = gradrate4yr_mean)) +
+  ggplot2::geom_line() +
+  ggplot2::xlim(c(1990, 2010)) +
+  ggplot2::ylim(c(0.3, 0.45)) +
+  ggplot2::labs(title  = "Rate of Schools on Semesters",
+                x = "Year",
+                y = "Rate of schools on semesters") +
+  ggplot2::theme_bw() 
+graph_gradrate
+```
+
+## 3. semester導⼊率の推移
+
+```{r, echo=FALSE}
+graph_semester_rate <- ggplot2::ggplot(data = master_by_year, ggplot2::aes(x = year, y = semester_rate)) +
+  ggplot2::geom_line() +
+  ggplot2::xlim(c(1990, 2010)) +
+  ggplot2::ylim(c(0.87, 1.00)) +
+  ggplot2::labs(title  = "Four-Year Graduation Rates",
+                x = "Year",
+                y = "Four-year graduation rates") +
+  ggplot2::theme_bw() 
+graph_semester_rate
+```
+
+## 4. 散布図
+
+```{r, echo=FALSE}
+make_scatter_plot <- function(variable, label){
+  data_scatter_plot <- master |> 
+    dplyr::mutate("per_men_cohort" = 1 - per_women_cohort)
+  variable <- rlang::enquo(variable)
+  ggplot2::ggplot(data = data_scatter_plot) +
+    ggplot2::geom_point(ggplot2::aes(x = !!variable, y = gradrate4yr)) +
+    ggplot2::labs(x = paste0(label),
+                  y = "Four-year graduation rate",
+                  title = paste0("scatter plot of ", label, " and Four-year graduation rate")) +
+    ggplot2::theme_bw() 
+}
+
+make_scatter_plot(variable = per_women_cohort, label = "per women cohort")
+make_scatter_plot(variable = per_men_cohort, label = "per men cohort")
+make_scatter_plot(variable = per_white_cohort, label = "per white cohort")
+make_scatter_plot(variable = costs, label = "Total expenditures")
+make_scatter_plot(variable = instatetuition, label = "In-state tuition")
+```
+
+3つ目の散布図より、白人の学生数が極端に少ない場合、4年卒業率が高い大学が存在しないことがわかる。また、4つ目の散布図より、大学の運営コストが極端に大きい場合、4年卒業率が高くなる。最後に5つ目の散布図より、学費が高い大学ほど4年卒業率も高い。この関係性は他の4つの変数より顕著で、相関は0.736542 である。
+
+# (b) 回帰分析
+
+```{r, echo=FALSE, include=FALSE}
+data_for_regression <- master |> 
+  dplyr::group_by(unitid) |> 
+  dplyr::mutate(yearofsem = if(any(semester == 1)){min(year[semester == 1])}else{9999}) |> 
+  dplyr::ungroup() |> 
+  dplyr::mutate(yearstosem = year - yearofsem) |> 
+  dplyr::rowwise() |> 
+  dplyr::mutate(treated = if(yearstosem >= 0){1} else{0})
+```
+
+## 2. 式の推定と解釈
+
+$Y_{sk}=\beta_0 +\beta_1 treated_{sk}+\epsilon_{sk}$ …(1) について推定を行うと、
+
+```{r, echo=FALSE}
+estimatr::lm_robust(gradrate4yr ~ treated, data = data_for_regression)
+```
+
+上記のような結果が得られた。すなわち、$\beta_0 =0.33675549, \beta_1 = 0.03633584$ ということである。 したがって、quarter制の大学はtreated = 0であるので平均的な4年卒業率が $0.33675549=\beta_0$、semester制の大学は平均的な4年卒業率が$0.37309133=\beta_0 + \beta_1$ ということがわかる。
+
+## 3. 数式 (1) の問題点
+
+上記の数式(1)の問題点は主に以下の3点である。
+
+・quarterからsemesterになった大学を処置群、quarterのままの大学を対照群と仮定した場合、観測以前からsemesterであった大学はそのどちらでもないので、推定の外に出すか、それに対応した項を設けなければいけない点。
+
+・semester制が導⼊されたことによる4年卒業率への影響は、導入された年に完結するわけではない。それにもかかわらず、10年以上前にすでに変更している場合や1年前に変更した場合などのすべての場合について、同一の関連性(same $\beta_1$)があると仮定してしまっている点。
+
+・例えば、1991年にsemester制が導⼊された場合と2001年に導入された場合では、景気やその他の交絡因子の影響を受けて、同一の関係性(same $\beta_1$)があるとはいいがたい。すなわち、処置のタイミングを考慮していない点。
+
+
+## 4. 改善が加えられている回帰式
+
+$Y_{sk}=\beta_0 +\beta_1 1(k=1)+\beta_2 1(k=2)+\beta_3 1(k=3)+\beta_4 1(k=4)+\beta_5 1(k=5,6)+\beta_6 1(k>6)+\epsilon_{sk}$
+
+$1(.)$ をk（相対年数(yearstosem)）の値に応じた指示関数とする。上記のように、処置の時点からの経過年数ごとにダミー変数を定めることで、Partially treatedの期間などをそれぞれ別に考えることができる。
+
+加えて、以下の推定では、観測された期間中で少なくとも1年は、quarterであった大学のみに対して分析した。（観測以前からsemester制であった大学を排除した。）
+
+```{r, echo=FALSE}
+pre_quater <- master |> 
+  dplyr::group_by(unitid) |> 
+  dplyr::filter(any(quarter == 1)) |> 
+  dplyr::ungroup() 
+
+pre_quater_for_regression <- pre_quater |>
+  dplyr::group_by(unitid) |> 
+  dplyr::mutate(yearofsem = if(any(semester == 1)){min(year[semester == 1])}else{9999}) |> 
+  dplyr::ungroup() |> 
+  dplyr::mutate(yearstosem = year - yearofsem) |> 
+  dplyr::rowwise() |> 
+  dplyr::mutate(treated = if(yearstosem >= 0){yearstosem + 1}else{0}) |> 
+  dplyr::mutate(sem1yr  = if(treated == 1){1}else{0},
+                sem2yrs = if(treated == 2){1}else{0},
+                sem3yrs = if(treated == 3){1}else{0},
+                sem4yrs = if(treated == 4){1}else{0},
+                sem5_6yrs = if(treated %in% c(5,6)){1}else{0},
+                sem_above6 = if(treated >= 7){1}else{0})
+                
+estimatr::lm_robust(gradrate4yr ~ sem1yr + sem2yrs + sem3yrs + sem4yrs + sem5_6yrs + sem_above6,
+                    data = pre_quater_for_regression)
+```
+
+結果として、2.での結果と異なり、quarterからsemesterにすると、4年卒業率が低下することがわかる。
+
+## 5. 平行トレンド
+
+```{r, echo=FALSE, include=FALSE}
+switchers <- master |> 
+  dplyr::group_by(unitid) |> 
+  dplyr::filter(any(quarter == 1)) |> 
+  dplyr::filter(any(semester == 1)) |> 
+  dplyr::ungroup() 
+
+only_quater <- dplyr::anti_join(pre_quater, switchers) 
+
+switchers_for_trendcheck <- switchers |>
+  dplyr::group_by(unitid) |> 
+  dplyr::mutate(yearofsem = if(any(semester == 1)){min(year[semester == 1])}else{NA}) |> 
+  dplyr::ungroup() |> 
+  dplyr::mutate(yearstosem = year - yearofsem) |> 
+  dplyr::rowwise() |> 
+  dplyr::mutate(treated = if(yearstosem >= 0){yearstosem + 1}else{0})
+
+switchers_for_plot <- switchers_for_trendcheck |> 
+  dplyr::filter(treated == 0) |> 
+  dplyr::group_by(year) |> 
+  dplyr::summarise(mean = mean(gradrate4yr)) |> 
+  dplyr::ungroup()
+
+only_quater_for_plot <- only_quater |> 
+  dplyr::group_by(year) |> 
+  dplyr::summarise(mean = mean(gradrate4yr)) |> 
+  dplyr::ungroup()
+```
+
+```{r, echo=FALSE}
+ggplot2::ggplot() +
+  ggplot2::geom_line(ggplot2::aes(x = year, y = mean), color = "red" , data = only_quater_for_plot) +
+  ggplot2::geom_line(ggplot2::aes(x = year, y = mean), color = "blue", data = switchers_for_plot) +
+  ggplot2::labs(x = "year",
+                y = "Four-year graduation rates rate") +
+  ggplot2::theme_bw()
+```
+
+赤線が対照群、青線が介入前の処置群の4年卒業率の推移を示している。介入前の処置群の数が時間とともに減っているため、1997以降は平行トレンドになっていないが、それ以前は平行トレンドの仮定を満たしていると考えられる。
